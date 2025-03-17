@@ -5,33 +5,67 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
+	"net"
+	"strings"
 )
 
-const filePath = "./httpfromtcp/messages.txt"
-
 func main() {
-	file, err := os.Open(filePath)
+	listener, err := net.Listen("tcp", ":42069")
 	if err != nil {
-		log.Fatalf("Error opening file %v: %v", filePath, err)
+		log.Fatalf("error: %v", err)
 	}
-	defer file.Close() // may need to remove this call?
-
-	fmt.Printf("Reading data from %v\n", filePath)
-	fmt.Println("==============================")
+	defer listener.Close()
 
 	for {
-		buffer := make([]byte, 8, 8)
-		n, err := file.Read(buffer)
+		conn, err := listener.Accept()
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			fmt.Printf("error: %v\n", err.Error())
-			break
+			log.Fatalf("error: %v", err)
+		}
+		fmt.Println("***** connection accepted *****")
+
+		lines := getLinesChannel(conn)
+		for line := range lines {
+			fmt.Printf("%v\n", line)
 		}
 
-		str := string(buffer[:n])
-		fmt.Printf("read: %v\n", str)
+		fmt.Println("***** connection closed *****")
 	}
+}
+
+func getLinesChannel(f io.ReadCloser) <-chan string {
+	ch := make(chan string)
+
+	currentLine := ""
+
+	go func() {
+		defer close(ch)
+		defer f.Close()
+
+		for {
+			buffer := make([]byte, 8)
+			n, err := f.Read(buffer)
+			if err != nil {
+				if currentLine != "" {
+					ch <- currentLine
+					currentLine = ""
+				}
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				fmt.Printf("error: %v\n", err.Error())
+				break
+			}
+	
+			str := string(buffer[:n])
+			parts := strings.Split(str, "\n")
+			for i := 0; i < len(parts) - 1; i++ {
+				ch <- currentLine + parts[i]
+				currentLine = ""
+			}
+	
+			currentLine += parts[len(parts) - 1]
+		}
+	}()
+
+	return ch
 }
